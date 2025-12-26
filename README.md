@@ -13,8 +13,13 @@ A custom Home Assistant Lovelace card that displays temperature data as a color-
 - Customizable color thresholds
 - Navigation between time periods (previous/next/current)
 - Min/Max/Avg statistics footer
+- Pairs well with the [Windspeed heatmap card](https://github.com/sxdjt/ha-windspeed-heatmap)
 
 <img width="1027" height="727" alt="example" src="https://github.com/user-attachments/assets/5b6c5114-9866-4e58-801e-f738583f0f02" />
+
+## Installation
+
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=sxdjt&repository=ha-temperature-heatmap)
 
 ## Configuration
 

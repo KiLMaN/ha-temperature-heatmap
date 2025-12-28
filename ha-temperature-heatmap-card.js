@@ -1,4 +1,4 @@
-/* Last modified: 26-Dec-2025 11:30 */
+/* Last modified: 27-Dec-2025 18:00 */
 
 // Register with Home Assistant custom cards
 window.customCards = window.customCards || [];
@@ -127,7 +127,7 @@ class TemperatureHeatmapCard extends HTMLElement {
       refresh_interval: config.refresh_interval || 300,  // Seconds (5 min default)
 
       // Interaction
-      click_action: config.click_action || 'tooltip',  // 'none', 'more-info', 'tooltip'
+      click_action: config.click_action || 'more-info',  // 'none', 'more-info', 'tooltip'
 
       // Display options
       show_entity_name: config.show_entity_name || false
@@ -1122,9 +1122,7 @@ class TemperatureHeatmapCard extends HTMLElement {
 
     const dateStr = date.toLocaleString(undefined, {
       month: 'short',
-      day: 'numeric',
-      hour: 'numeric',
-      minute: '2-digit'
+      day: 'numeric'
     });
 
     const unit = this._getUnit();

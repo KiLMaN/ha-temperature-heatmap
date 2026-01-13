@@ -74,19 +74,19 @@ color_thresholds:
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `entity` | string | **Required** | Temperature sensor entity ID |
-| `title` | string | `"Temperature History"` | Card title |
-| `days` | number | `7` | Number of days to display (1-30) |
-| `time_interval` | number | `2` | Hours per row: 1, 2, 3, 4, 6, 8, 12, or 24 |
-| `start_hour` | number | `0` | Start hour for display filter (0-23) |
-| `end_hour` | number | `23` | End hour for display filter (0-23) |
 | `aggregation_mode` | string | `"average"` | Data aggregation: "average", "min", or "max" |
-| `decimals` | number | `1` | Decimal places to display: 0, 1, or 2 |
-| `time_format` | string | `"24"` | Time format: "12" or "24" |
-| `unit` | string | auto-detect | Temperature unit override (e.g., "°F", "°C") |
-| `show_entity_name` | boolean | `false` | Show entity friendly name in footer |
-| `refresh_interval` | number | `300` | Data refresh interval in seconds |
 | `click_action` | string | `"tooltip"` | Cell click action: "tooltip", "more-info", or "none" |
 | `color_thresholds` | array | See below | Color mapping for temperatures |
+| `days` | number | `7` | Number of days to display (1-30) |
+| `decimals` | number | `1` | Decimal places to display: 0, 1, or 2 |
+| `end_hour` | number | `23` | End hour for display filter (0-23) |
+| `refresh_interval` | number | `300` | Data refresh interval in seconds |
+| `show_entity_name` | boolean | `false` | Show entity friendly name in footer |
+| `start_hour` | number | `0` | Start hour for display filter (0-23) |
+| `time_format` | string | `"24"` | Time format: "12" or "24" |
+| `time_interval` | number | `2` | Hours per row: 1, 2, 3, 4, 6, 8, 12, or 24 |
+| `title` | string | `"Temperature History"` | Card title |
+| `unit` | string | auto-detect | Temperature unit override (e.g., "°F", "°C") |
 
 ## Default Color Thresholds
 

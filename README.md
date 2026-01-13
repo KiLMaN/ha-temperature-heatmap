@@ -10,6 +10,7 @@ A custom Home Assistant Lovelace card that displays temperature data as a color-
 - Three aggregation modes: average, minimum, and maximum
 - Auto-detection of temperature scale (Fahrenheit/Celsius)
 - Configurable time periods (1-30 days) and intervals (1-24 hours)
+- Hour filtering to display specific time ranges (e.g., daytime only, nighttime with wrap-around)
 - Customizable color thresholds
 - Navigation between time periods (previous/next/current)
 - Min/Max/Avg statistics footer
@@ -39,6 +40,8 @@ title: "Outdoor Temperature History"
 days: 7
 time_interval: 2
 time_format: "24"
+start_hour: 0
+end_hour: 23
 aggregation_mode: average
 decimals: 1
 unit: "°F"
@@ -74,6 +77,8 @@ color_thresholds:
 | `title` | string | `"Temperature History"` | Card title |
 | `days` | number | `7` | Number of days to display (1-30) |
 | `time_interval` | number | `2` | Hours per row: 1, 2, 3, 4, 6, 8, 12, or 24 |
+| `start_hour` | number | `0` | Start hour for display filter (0-23) |
+| `end_hour` | number | `23` | End hour for display filter (0-23) |
 | `aggregation_mode` | string | `"average"` | Data aggregation: "average", "min", or "max" |
 | `decimals` | number | `1` | Decimal places to display: 0, 1, or 2 |
 | `time_format` | string | `"24"` | Time format: "12" or "24" |
@@ -148,6 +153,60 @@ The `time_interval` option determines how many hours of data are aggregated into
 - `8`: Every 8 hours (3 rows per day)
 - `12`: Every 12 hours (2 rows per day)
 - `24`: Daily view (1 row per day)
+
+## Hour Filtering
+
+Use `start_hour` and `end_hour` to limit which hours are displayed. This is useful for focusing on specific time periods and reducing visual clutter.
+
+Note: The card still fetches all 24 hours of data, but only displays and calculates statistics for the filtered hours.
+
+### Normal Range (Daytime)
+
+Display only 08:00 through 17:00:
+
+```yaml
+type: custom:ha-temperature-heatmap-card
+entity: sensor.outdoor_temperature
+time_interval: 1
+start_hour: 8
+end_hour: 17
+```
+
+### Wrap-around Range (Nighttime)
+
+Display 22:00, 23:00, 00:00, 01:00, 02:00, 03:00, 04:00, 05:00:
+
+```yaml
+type: custom:ha-temperature-heatmap-card
+entity: sensor.bedroom_temperature
+time_interval: 1
+start_hour: 22
+end_hour: 5
+```
+
+### Single Hour
+
+Display only the noon hour:
+
+```yaml
+type: custom:ha-temperature-heatmap-card
+entity: sensor.outdoor_temperature
+time_interval: 1
+start_hour: 12
+end_hour: 12
+```
+
+### Hour Filtering with Time Intervals
+
+When using intervals greater than 1 hour, filtering applies to the start hour of each time bucket:
+
+With `time_interval: 2` and `start_hour: 8`, `end_hour: 18`:
+- Row hour 6 (06:00-07:59): NOT displayed
+- Row hour 8 (08:00-09:59): displayed
+- Row hour 10 (10:00-11:59): displayed
+- ...
+- Row hour 18 (18:00-19:59): displayed
+- Row hour 20 (20:00-21:59): NOT displayed
 
 ## Display Precision
 

@@ -1,4 +1,4 @@
-/* Last modified: 27-Dec-2025 18:04 */
+/* Last modified: 12-Jan-2026 22:59 */
 
 // Register with Home Assistant custom cards
 window.customCards = window.customCards || [];
@@ -100,6 +100,16 @@ class TemperatureHeatmapCard extends HTMLElement {
       throw new Error('decimals must be between 0 and 2');
     }
 
+    // Validate start_hour
+    if (config.start_hour !== undefined && (!Number.isInteger(config.start_hour) || config.start_hour < 0 || config.start_hour > 23)) {
+      throw new Error('start_hour must be an integer between 0 and 23');
+    }
+
+    // Validate end_hour
+    if (config.end_hour !== undefined && (!Number.isInteger(config.end_hour) || config.end_hour < 0 || config.end_hour > 23)) {
+      throw new Error('end_hour must be an integer between 0 and 23');
+    }
+
     // Build configuration with defaults
     this._config = {
       // Required
@@ -110,6 +120,10 @@ class TemperatureHeatmapCard extends HTMLElement {
       days: config.days || 7,
       time_interval: config.time_interval || 2,
       time_format: config.time_format || '24',  // '12' or '24'
+
+      // Hour filtering
+      start_hour: config.start_hour !== undefined ? config.start_hour : 0,  // 0-23
+      end_hour: config.end_hour !== undefined ? config.end_hour : 23,  // 0-23
 
       // Aggregation mode
       aggregation_mode: config.aggregation_mode || 'average',  // 'average', 'min', 'max'
@@ -773,6 +787,20 @@ class TemperatureHeatmapCard extends HTMLElement {
       rows.push(row);
     }
 
+    // Filter rows based on start_hour/end_hour configuration
+    // This affects both display and statistics
+    const filteredRows = rows.filter(row => this._shouldDisplayRow(row.hour));
+
+    // Collect all temperatures from filtered rows only for statistics
+    allTemperatures = [];
+    filteredRows.forEach(row => {
+      row.cells.forEach(cell => {
+        if (cell.temperature !== null) {
+          allTemperatures.push(cell.temperature);
+        }
+      });
+    });
+
     // Calculate statistics
     const stats = {
       min: allTemperatures.length > 0 ? Math.min(...allTemperatures) : 0,
@@ -782,7 +810,7 @@ class TemperatureHeatmapCard extends HTMLElement {
         : 0
     };
 
-    this._processedData = { rows, dates, stats };
+    this._processedData = { rows: filteredRows, dates, stats };
   }
 
   // Get date key in format YYYY-MM-DD using LOCAL timezone
@@ -796,6 +824,21 @@ class TemperatureHeatmapCard extends HTMLElement {
   // Bucket hour into interval (e.g., hour 7 with 2-hour interval -> 6)
   _getHourBucket(hour, intervalHours) {
     return Math.floor(hour / intervalHours) * intervalHours;
+  }
+
+  // Check if a row with given hour should be displayed based on start_hour/end_hour filter
+  _shouldDisplayRow(rowHour) {
+    const startHour = this._config.start_hour;
+    const endHour = this._config.end_hour;
+
+    // Normal range: start_hour <= end_hour (e.g., 8 to 17)
+    if (startHour <= endHour) {
+      return rowHour >= startHour && rowHour <= endHour;
+    }
+
+    // Wrap-around range: start_hour > end_hour (e.g., 22 to 5)
+    // Display if hour is >= start (22, 23) OR <= end (0, 1, 2, 3, 4, 5)
+    return rowHour >= startHour || rowHour <= endHour;
   }
 
   // Format hour as "12a", "3p", etc. (12-hour) or "00", "15", etc. (24-hour)

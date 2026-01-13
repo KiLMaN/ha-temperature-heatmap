@@ -9,7 +9,7 @@ window.customCards.push({
 });
 
 console.info(
-  '%c TEMPERATURE-HEATMAP-CARD %c v0.1.2 ',
+  '%c TEMPERATURE-HEATMAP-CARD %c v0.1.3 ',
   'color: lightblue; font-weight: bold; background: black',
   'color: white; font-weight: bold; background: dimgray'
 );

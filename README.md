@@ -1,10 +1,10 @@
 # Temperature Heatmap Card
 
-A custom Home Assistant Lovelace card that displays temperature data as a color-coded heatmap, showing hourly patterns across multiple days with flexible aggregation modes.
-
 ![GitHub Release](https://img.shields.io/github/v/release/sxdjt/ha-temperature-heatmap?style=for-the-badge)
 [![AI Assisted](https://img.shields.io/badge/AI-Claude%20Code-AAAAAA.svg?style=for-the-badge)](https://claude.ai/code)
 ![GitHub License](https://img.shields.io/github/license/sxdjt/ha-temperature-heatmap?style=for-the-badge)
+
+A custom Home Assistant Lovelace card that displays temperature data as a color-coded heatmap, showing hourly patterns across multiple days with flexible aggregation modes.
 
 ## Features
 

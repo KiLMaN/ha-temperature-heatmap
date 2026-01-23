@@ -69,6 +69,8 @@ class TemperatureHeatmapCard extends HTMLElement {
 
     // Event delegation for all clicks
     this._content.addEventListener('click', this._handleClick.bind(this));
+    // Store cached responses in memory
+    this._responseCache = new Map(); // key -> { data, expiry }
   }
 
   // Home Assistant required method: set card configuration
@@ -647,6 +649,36 @@ class TemperatureHeatmapCard extends HTMLElement {
     return age > maxAge;
   }
 
+  async fetchWithCache(url, timeoutMs = 30000, ttlMs = 5 * 60 * 1000) {
+
+    const now = Date.now();
+
+    // Check if the cache has a valid entry
+    const cached = this._responseCache.get(url);
+    if (cached && cached.expiry > now) {
+      console.log("Using cached data for:", url);
+      return cached.data;
+    }
+   
+    // Fetch with timeout
+    const fetchPromise =  this._hass.callApi('GET', url);
+
+    
+    const data = await Promise.race([
+      fetchPromise,
+      new Promise((_, reject) =>
+        setTimeout(
+          () => reject(new Error(`Request timeout after ${timeoutMs}ms`)),
+          timeoutMs
+        )
+      ),
+    ]);
+
+    // Store in cache
+    this._responseCache.set(url, { data, expiry: now + ttlMs });
+    return data;
+  }
+
   // Fetch historical data from Home Assistant
   async _fetchHistoryData() {
     if (this._isLoading) {
@@ -712,7 +744,7 @@ class TemperatureHeatmapCard extends HTMLElement {
 
       // Fetch with timeout
       const startFetch = Date.now();
-      const result = await fetchWithTimeout(this._hass.callApi('GET', temperatureUrl));
+      const result = await this.fetchWithCache(temperatureUrl);
       const fetchDuration = ((Date.now() - startFetch) / 1000).toFixed(1);
 
       console.log(`Temperature Heatmap: Received ${result?.[0]?.length || 0} temperature points in ${fetchDuration}s`);

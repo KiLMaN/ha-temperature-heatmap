@@ -211,6 +211,28 @@ class TemperatureHeatmapCard extends HTMLElement {
     return document.createElement("ha-temperature-heatmap-card-editor");
   }
 
+  // Returns a minimal configuration that will result in a working card
+  static getStubConfig(hass) {
+    // Tries to get the first sensor of temperature
+
+    const temperatureSensors = Object.keys(hass.states)
+      .filter(entityId => {
+        if (!entityId.startsWith('sensor.')) return false;
+        const entity = hass.states[entityId];
+        return entity?.attributes?.['device_class'] === 'temperature';
+      });
+
+    return {
+      type: 'custom:ha-temperature-heatmap-card',
+      entity: (temperatureSensors.length > 0 ? temperatureSensors[0] : ''),
+      title: 'Temperature History',
+      days: 7,
+      time_interval: 2,
+      aggregation_mode: 'average',
+      color_thresholds : DEFAULT_THRESHOLDS_CELSIUS.slice()
+    };
+  }
+
   // Get default thresholds based on detected unit
   _getDefaultThresholds() {
     const unit = this._getUnit().toLowerCase();
@@ -1562,6 +1584,8 @@ class TemperatureHeatmapCardEditor extends HTMLElement {
     // Clone pour être sûr de ne pas modifier l'objet read-only
     this._config = { ...(config || {}) };
 
+    // Ensure that the entity picker element is available to us before we render.
+    // https://github.com/thomasloven/hass-config/wiki/PreLoading-Lovelace-Elements
     var helpers = await loadCardHelpers();
     if (!customElements.get("ha-entity-picker")) {
       const entities_card = await helpers.createCardElement({

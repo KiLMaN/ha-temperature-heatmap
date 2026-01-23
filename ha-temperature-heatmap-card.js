@@ -1916,7 +1916,5 @@ class TemperatureHeatmapCardEditor extends HTMLElement {
 }
 
 // Register custom element
-customElements.define(
-  "ha-temperature-heatmap-card-editor",
-  TemperatureHeatmapCardEditor
-);
+customElements.define("ha-temperature-heatmap-card-editor", TemperatureHeatmapCardEditor);
+customElements.define('ha-temperature-heatmap-card', TemperatureHeatmapCard);

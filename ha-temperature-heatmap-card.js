@@ -69,6 +69,8 @@ class TemperatureHeatmapCard extends HTMLElement {
 
     // Event delegation for all clicks
     this._content.addEventListener('click', this._handleClick.bind(this));
+    // Store cached responses in memory
+    this._responseCache = new Map(); // key -> { data, expiry }
   }
 
   // Home Assistant required method: set card configuration
@@ -191,7 +193,9 @@ class TemperatureHeatmapCard extends HTMLElement {
       compact: config.compact || false,
 
       // Visual options
-      rounded_corners: config.rounded_corners !== false  // Default true
+      rounded_corners: config.rounded_corners !== false,  // Default true
+      interpolate_colors: config.interpolate_colors || false,
+      color_interpolation : config.color_interpolation || 'hsl',// 'gamma', 'hsl', 'lab', 'rgb'
     };
 
     // Sort thresholds by value (ascending) - create mutable copy to avoid "read-only" errors
@@ -201,6 +205,32 @@ class TemperatureHeatmapCard extends HTMLElement {
     if (this._hass) {
       this._clearAndSetInterval();
     }
+  }
+
+  static getConfigElement() {
+    return document.createElement("ha-temperature-heatmap-card-editor");
+  }
+
+  // Returns a minimal configuration that will result in a working card
+  static getStubConfig(hass) {
+    // Tries to get the first sensor of temperature
+
+    const temperatureSensors = Object.keys(hass.states)
+      .filter(entityId => {
+        if (!entityId.startsWith('sensor.')) return false;
+        const entity = hass.states[entityId];
+        return entity?.attributes?.['device_class'] === 'temperature';
+      });
+
+    return {
+      type: 'custom:ha-temperature-heatmap-card',
+      entity: (temperatureSensors.length > 0 ? temperatureSensors[0] : ''),
+      title: 'Temperature History',
+      days: 7,
+      time_interval: 2,
+      aggregation_mode: 'average',
+      color_thresholds : DEFAULT_THRESHOLDS_CELSIUS.slice()
+    };
   }
 
   // Get default thresholds based on detected unit
@@ -641,6 +671,36 @@ class TemperatureHeatmapCard extends HTMLElement {
     return age > maxAge;
   }
 
+  async fetchWithCache(url, timeoutMs = 30000, ttlMs = 5 * 60 * 1000) {
+
+    const now = Date.now();
+
+    // Check if the cache has a valid entry
+    const cached = this._responseCache.get(url);
+    if (cached && cached.expiry > now) {
+      console.log("Using cached data for:", url);
+      return cached.data;
+    }
+   
+    // Fetch with timeout
+    const fetchPromise =  this._hass.callApi('GET', url);
+
+    
+    const data = await Promise.race([
+      fetchPromise,
+      new Promise((_, reject) =>
+        setTimeout(
+          () => reject(new Error(`Request timeout after ${timeoutMs}ms`)),
+          timeoutMs
+        )
+      ),
+    ]);
+
+    // Store in cache
+    this._responseCache.set(url, { data, expiry: now + ttlMs });
+    return data;
+  }
+
   // Fetch historical data from Home Assistant
   async _fetchHistoryData() {
     if (this._isLoading) {
@@ -706,7 +766,7 @@ class TemperatureHeatmapCard extends HTMLElement {
 
       // Fetch with timeout
       const startFetch = Date.now();
-      const result = await fetchWithTimeout(this._hass.callApi('GET', temperatureUrl));
+      const result = await this.fetchWithCache(temperatureUrl);
       const fetchDuration = ((Date.now() - startFetch) / 1000).toFixed(1);
 
       console.log(`Temperature Heatmap: Received ${result?.[0]?.length || 0} temperature points in ${fetchDuration}s`);
@@ -1085,6 +1145,196 @@ class TemperatureHeatmapCard extends HTMLElement {
     `;
   }
 
+  _interpolateRGB(c1, c2, t) {
+    const a = this._hexToRgb(c1);
+    const b = this._hexToRgb(c2);
+
+    return this._rgbToHex({
+      r: Math.round(a.r + (b.r - a.r) * t),
+      g: Math.round(a.g + (b.g - a.g) * t),
+      b: Math.round(a.b + (b.b - a.b) * t)
+    });
+  }
+  _interpolateGamma(c1, c2, t, gamma = 2.2) {
+    const a = this._hexToRgb(c1);
+    const b = this._hexToRgb(c2);
+
+    const interp = (x, y) =>
+      Math.pow(
+        Math.pow(x / 255, gamma) +
+        (Math.pow(y / 255, gamma) - Math.pow(x / 255, gamma)) * t,
+        1 / gamma
+      ) * 255;
+
+    return this._rgbToHex({
+      r: interp(a.r, b.r),
+      g: interp(a.g, b.g),
+      b: interp(a.b, b.b)
+    });
+  }
+  _interpolateHSL(c1, c2, t) {
+    const a = this._rgbToHsl(this._hexToRgb(c1));
+    const b = this._rgbToHsl(this._hexToRgb(c2));
+
+    let dh = b.h - a.h;
+    if (Math.abs(dh) > 180) dh -= Math.sign(dh) * 360;
+
+    const h = (a.h + dh * t + 360) % 360;
+    const s = a.s + (b.s - a.s) * t;
+    const l = a.l + (b.l - a.l) * t;
+
+    return this._rgbToHex(this._hslToRgb({ h, s, l }));
+  }
+  _interpolateLAB(c1, c2, t) {
+    const a = this._rgbToLab(this._hexToRgb(c1));
+    const b = this._rgbToLab(this._hexToRgb(c2));
+
+    const lab = {
+      l: a.l + (b.l - a.l) * t,
+      a: a.a + (b.a - a.a) * t,
+      b: a.b + (b.b - a.b) * t
+    };
+
+    return this._rgbToHex(this._labToRgb(lab));
+  }
+
+  _hexToRgb(hex) {
+    const cleanHex = hex.replace("#", "");
+    return {
+      r: parseInt(cleanHex.substring(0, 2), 16),
+      g: parseInt(cleanHex.substring(2, 4), 16),
+      b: parseInt(cleanHex.substring(4, 6), 16),
+    };
+  }
+  _rgbToHex({ r, g, b }) {
+    const toHex = v =>
+      Math.max(0, Math.min(255, Math.round(v)))
+        .toString(16)
+        .padStart(2, "0");
+
+    return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+  }
+
+  _rgbToHsl({ r, g, b }) {
+    r /= 255; g /= 255; b /= 255;
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    let h = 0, s = 0;
+    const l = (max + min) / 2;
+
+    if (max !== min) {
+      const d = max - min;
+      s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+      switch (max) {
+        case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+        case g: h = (b - r) / d + 2; break;
+        case b: h = (r - g) / d + 4; break;
+      }
+      h *= 60;
+    }
+
+    return { h, s, l };
+  }
+  _hslToRgb({ h, s, l }) {
+    const c = (1 - Math.abs(2 * l - 1)) * s;
+    const x = c * (1 - Math.abs((h / 60) % 2 - 1));
+    const m = l - c / 2;
+    let r = 0, g = 0, b = 0;
+
+    if (h < 60) [r, g, b] = [c, x, 0];
+    else if (h < 120) [r, g, b] = [x, c, 0];
+    else if (h < 180) [r, g, b] = [0, c, x];
+    else if (h < 240) [r, g, b] = [0, x, c];
+    else if (h < 300) [r, g, b] = [x, 0, c];
+    else[r, g, b] = [c, 0, x];
+
+    return {
+      r: (r + m) * 255,
+      g: (g + m) * 255,
+      b: (b + m) * 255
+    };
+  }
+
+  _rgbToLab({ r, g, b }) {
+    const xyz = this._rgbToXyz(r, g, b);
+    const ref = [95.047, 100.0, 108.883];
+
+    let x = xyz.x / ref[0];
+    let y = xyz.y / ref[1];
+    let z = xyz.z / ref[2];
+
+    [x, y, z] = [x, y, z].map(v =>
+      v > 0.008856 ? Math.cbrt(v) : (7.787 * v) + 16 / 116
+    );
+
+    return {
+      l: (116 * y) - 16,
+      a: 500 * (x - y),
+      b: 200 * (y - z)
+    };
+  }
+  _labToRgb({ l, a, b }) {
+    let y = (l + 16) / 116;
+    let x = a / 500 + y;
+    let z = y - b / 200;
+
+    [x, y, z] = [x, y, z].map(v => {
+      const v3 = v ** 3;
+      return v3 > 0.008856 ? v3 : (v - 16 / 116) / 7.787;
+    });
+
+    x *= 95.047;
+    y *= 100.0;
+    z *= 108.883;
+
+    return this._xyzToRgb(x, y, z);
+  }
+
+  _rgbToXyz(r, g, b) {
+    [r, g, b] = [r, g, b].map((v) => {
+      v /= 255;
+      return v > 0.04045 ? Math.pow((v + 0.055) / 1.055, 2.4) : v / 12.92;
+    });
+
+    return {
+      x: (r * 0.4124 + g * 0.3576 + b * 0.1805) * 100,
+      y: (r * 0.2126 + g * 0.7152 + b * 0.0722) * 100,
+      z: (r * 0.0193 + g * 0.1192 + b * 0.9505) * 100,
+    };
+  }
+  _xyzToRgb(x, y, z) {
+    x /= 100; y /= 100; z /= 100;
+
+    let r = x * 3.2406 + y * -1.5372 + z * -0.4986;
+    let g = x * -0.9689 + y * 1.8758 + z * 0.0415;
+    let b = x * 0.0557 + y * -0.2040 + z * 1.0570;
+
+    const gamma = v =>
+      v > 0.0031308
+        ? 1.055 * Math.pow(v, 1 / 2.4) - 0.055
+        : 12.92 * v;
+
+    return {
+      r: gamma(r) * 255,
+      g: gamma(g) * 255,
+      b: gamma(b) * 255
+    };
+  }
+
+
+  _interpolateColor(color1, color2, ratio) {
+    switch (this._config.color_interpolation) {
+      case "gamma":
+        return this._interpolateGamma(color1, color2, ratio);
+      case "hsl":
+        return this._interpolateHSL(color1, color2, ratio);
+      case "lab":
+        return this._interpolateLAB(color1, color2, ratio);
+      case "rgb":
+      default:
+        return this._interpolateRGB(color1, color2, ratio);
+    }
+  }
   // Get color for temperature value based on thresholds
   _getColorForTemperature(temperature) {
     if (temperature === null || temperature === undefined) {
@@ -1092,18 +1342,48 @@ class TemperatureHeatmapCard extends HTMLElement {
     }
 
     const thresholds = this._config.color_thresholds;
-    let color = thresholds[0].color;
+    const interpolate = this._config.interpolate_colors === true;
 
-    // Find highest threshold that temperature meets or exceeds
-    for (let i = 0; i < thresholds.length; i++) {
-      if (temperature >= thresholds[i].value) {
-        color = thresholds[i].color;
-      } else {
-        break;
+    // ===== THRESHOLD MODE (legacy behavior) =====
+    if (!interpolate) {
+      let color = thresholds[0].color;
+
+      for (let i = 0; i < thresholds.length; i++) {
+        if (temperature >= thresholds[i].value) {
+          color = thresholds[i].color;
+        } else {
+          break;
+        }
+      }
+
+      return color;
+    }
+
+    // ===== INTERPOLATION MODE =====
+
+    // Below first threshold
+    if (temperature <= thresholds[0].value) {
+      return thresholds[0].color;
+    }
+
+    // Above last threshold
+    if (temperature >= thresholds[thresholds.length - 1].value) {
+      return thresholds[thresholds.length - 1].color;
+    }
+
+    // Between two thresholds
+    for (let i = 0; i < thresholds.length - 1; i++) {
+      const t1 = thresholds[i];
+      const t2 = thresholds[i + 1];
+
+      if (temperature >= t1.value && temperature <= t2.value) {
+        const ratio = (temperature - t1.value) / (t2.value - t1.value);
+
+        return this._interpolateColor(t1.color, t2.color, ratio);
       }
     }
 
-    return color;
+    return thresholds[0].color;
   }
 
   // Get contrasting text color (black or white) for background color
@@ -1275,24 +1555,390 @@ class TemperatureHeatmapCard extends HTMLElement {
     // If compact mode is enabled, use preset values
     if (this._config.compact) {
       return {
-        cellHeight: '24px',
-        cellWidth: '1fr',
-        cellPadding: '1px',
-        cellGap: '1px',
-        cellFontSize: '9px',
+        cellHeight: "24px",
+        cellWidth: "1fr",
+        cellPadding: "1px",
+        cellGap: "1px",
+        cellFontSize: "9px",
       };
     }
 
     // Otherwise use configured or default values
     return {
-      cellHeight: this._normalizeSize(this._config.cell_height, '36px'),
-      cellWidth: this._normalizeSize(this._config.cell_width, '1fr'),
-      cellPadding: this._normalizeSize(this._config.cell_padding, '2px'),
-      cellGap: this._normalizeSize(this._config.cell_gap, '2px'),
-      cellFontSize: this._normalizeSize(this._config.cell_font_size, '11px'),
+      cellHeight: this._normalizeSize(this._config.cell_height, "36px"),
+      cellWidth: this._normalizeSize(this._config.cell_width, "1fr"),
+      cellPadding: this._normalizeSize(this._config.cell_padding, "2px"),
+      cellGap: this._normalizeSize(this._config.cell_gap, "2px"),
+      cellFontSize: this._normalizeSize(this._config.cell_font_size, "11px"),
     };
   }
 }
 
+class TemperatureHeatmapCardEditor extends HTMLElement {
+  set hass(hass) {
+    this._hass = hass;
+    if (!this.content) this._buildEditor();
+  }
+
+  async setConfig(config) {
+    // Clone pour être sûr de ne pas modifier l'objet read-only
+    this._config = { ...(config || {}) };
+
+    // Ensure that the entity picker element is available to us before we render.
+    // https://github.com/thomasloven/hass-config/wiki/PreLoading-Lovelace-Elements
+    var helpers = await loadCardHelpers();
+    if (!customElements.get("ha-entity-picker")) {
+      const entities_card = await helpers.createCardElement({
+        type: "entities",
+        entities: [],
+      });
+      await entities_card.constructor.getConfigElement();
+    }
+
+    // Valeurs par défaut
+    const defaults = {
+      entity: "",
+      title: "Temperature History",
+      days: 7,
+      time_interval: 2,
+      time_format: "24",
+      start_hour: 0,
+      end_hour: 23,
+      aggregation_mode: "average",
+      decimals: 1,
+      unit: "c",
+      refresh_interval: 300,
+      click_action: "more-info",
+      show_entity_name: false,
+      cell_height: 36,
+      cell_width: "1fr",
+      cell_padding: 2,
+      cell_gap: 2,
+      cell_font_size: 11,
+      compact: false,
+      rounded_corners: true,
+      interpolate_colors: false,
+      color_interpolation: "hsl",
+    };
+    this._config = { ...defaults, ...this._config };
+
+    if (this.content) this._updateValues();
+  }
+
+  getConfig() {
+    return { ...this._config };
+  }
+
+  _buildEditor() {
+    this.content = document.createElement("div");
+    this.content.style.display = "grid";
+    this.content.style.gridGap = "8px";
+    this.content.style.padding = "8px";
+    this.appendChild(this.content);
+
+    this.container_threshold = {};
+    this.fields = {};
+
+    // --- Définition des champs ---
+    const fields = [
+      { type: "entity", key: "entity", label: "Entity", required: true },
+      { type: "text", key: "title", label: "Title" },
+      { type: "number", key: "days", label: "Days", min: 1, max: 365 },
+      {
+        type: "number",
+        key: "time_interval",
+        label: "Time Interval (hours)",
+        min: 1,
+        max: 24,
+      },
+      {
+        type: "select",
+        key: "time_format",
+        label: "Time Format",
+        options: { 24: "24h", 12: "12h" },
+      },
+      {
+        type: "number",
+        key: "start_hour",
+        label: "Start Hour",
+        min: 0,
+        max: 23,
+      },
+      { type: "number", key: "end_hour", label: "End Hour", min: 0, max: 23 },
+      {
+        type: "select",
+        key: "aggregation_mode",
+        label: "Aggregation Mode",
+        options: { average: "Average", min: "Min", max: "Max" },
+      },
+      { type: "number", key: "decimals", label: "Decimals", min: 0, max: 2 },
+      {
+        type: "select",
+        key: "unit",
+        label: "Unit",
+        options: { c: "°C", f: "°F" },
+      },
+      {
+        type: "number",
+        key: "refresh_interval",
+        label: "Refresh Interval (s)",
+        min: 10,
+        max: 3600,
+      },
+      {
+        type: "select",
+        key: "click_action",
+        label: "Click Action",
+        options: { none: "None", "more-info": "More Info", tooltip: "Tooltip" },
+      },
+      { type: "switch", key: "show_entity_name", label: "Show Entity Name" },
+      {
+        type: "number",
+        key: "cell_height",
+        label: "Cell Height",
+        min: 10,
+        max: 200,
+      },
+      { type: "text", key: "cell_width", label: "Cell Width (px ou fr)" },
+      {
+        type: "number",
+        key: "cell_padding",
+        label: "Cell Padding",
+        min: 0,
+        max: 50,
+      },
+      { type: "number", key: "cell_gap", label: "Cell Gap", min: 0, max: 50 },
+      {
+        type: "number",
+        key: "cell_font_size",
+        label: "Cell Font Size",
+        min: 6,
+        max: 32,
+      },
+      { type: "switch", key: "compact", label: "Compact Mode" },
+      { type: "switch", key: "rounded_corners", label: "Rounded Corners" },
+      {
+        type: "switch",
+        key: "interpolate_colors",
+        label: "Interpolate Colors",
+      },
+      {
+        type: "select",
+        key: "color_interpolation",
+        label: "Color Interpolation",
+        options: { rgb: "RGB", gamma: "Gamma RGB", hsl: "HSL", lab: "LAB" },
+      },
+      {
+        type: "thresholds",
+        key: "color_thresholds",
+        label: "Colors",
+      },
+    ];
+
+    // Création des champs dynamiquement
+    fields.forEach((f) => this._createField(f));
+
+    this._updateValues();
+  }
+
+  _createThresholdEditor() {
+    // Fonction pour créer un threshold row
+    const createRow = (threshold, index) => {
+      const row = document.createElement("div");
+      row.style.display = "flex";
+      row.style.alignItems = "center";
+      row.style.gap = "8px";
+
+      const valueInput = document.createElement("ha-textfield");
+      valueInput.type = "number";
+      valueInput.value = threshold.value;
+
+      valueInput.addEventListener("change", (e) => {
+        e.stopPropagation();
+        const new_thresholds = [...this._config.color_thresholds];
+        const threshold = { ...this._config.color_thresholds[index] };
+        threshold.value = Number(e.target.value);
+        new_thresholds[index] = threshold;
+        this._onFieldChange("color_thresholds", new_thresholds);
+        this._refreshThresholdEditor();
+      });
+
+      const colorInput = document.createElement("input");
+      colorInput.type = "color";
+      colorInput.value = threshold.color;
+      colorInput.addEventListener("change", (e) => {
+        e.stopPropagation();
+        const new_thresholds = [...this._config.color_thresholds];
+        const threshold = { ...this._config.color_thresholds[index] };
+        threshold.color = e.target.value;
+        new_thresholds[index] = threshold;
+        this._onFieldChange("color_thresholds", new_thresholds);
+        this._refreshThresholdEditor();
+      });
+
+      const removeBtn = document.createElement("button");
+      removeBtn.textContent = "✕";
+      removeBtn.style.cursor = "pointer";
+      removeBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const new_thresholds = [...this._config.color_thresholds];
+        new_thresholds.splice(index, 1);
+        this._onFieldChange("color_thresholds", new_thresholds);
+        this._refreshThresholdEditor();
+      });
+
+      row.appendChild(valueInput);
+      row.appendChild(colorInput);
+      row.appendChild(removeBtn);
+      this.container_threshold.appendChild(row);
+    };
+
+    // Crée toutes les lignes
+    if (!this._config.color_thresholds) this._config.color_thresholds = [];
+    this._config.color_thresholds.forEach((t, i) => createRow(t, i));
+  }
+  _refreshThresholdEditor() {
+    // Supprime l'ancien container et recrée les rows
+    while (this.container_threshold.firstChild)
+      this.container_threshold.removeChild(this.container_threshold.firstChild);
+    this._createThresholdEditor();
+  }
+  _updateValues() {
+    if (!this._config) return;
+    for (const key in this.fields) {
+      const input = this.fields[key].input;
+      if (
+        this.fields[key].type === "checkbox" ||
+        this.fields[key].type === "switch"
+      )
+        input.checked = !!this._config[key];
+      else if (this.fields[key].type === "thresholds") {
+        this._refreshThresholdEditor();
+      } else
+        input.value = this._config[key] !== undefined ? this._config[key] : "";
+    }
+  }
+  // --- Fonction générique pour créer un champ ---
+  _createField({ type, key, label, min, max, options, required }) {
+    const wrapper = document.createElement("div");
+    wrapper.style.display = "flex";
+    wrapper.style.flexDirection = "column";
+    wrapper.style.marginBottom = "8px";
+
+    let input;
+
+    if (type === "switch") {
+      // Switch / checkbox
+      wrapper.style.flexDirection = "row";
+      wrapper.style.alignItems = "center";
+      wrapper.style.gap = "8px";
+
+      input = document.createElement("ha-switch");
+      // input.checked = !!this._config[key];
+
+      const lbl = document.createElement("label");
+      lbl.textContent = label;
+
+      wrapper.appendChild(input);
+      wrapper.appendChild(lbl);
+
+      input.addEventListener("change", (e) => {
+        e.stopPropagation();
+        this._onFieldChange(key, input.checked);
+      });
+    } else if (type === "thresholds") {
+      const lbl = document.createElement("label");
+      lbl.textContent = label;
+      wrapper.appendChild(lbl);
+
+      // Container pour la liste
+      const list = document.createElement("div");
+      list.style.display = "grid";
+      list.style.gridGap = "8px";
+      wrapper.appendChild(list);
+
+      this.container_threshold = list; // Save container
+
+      // Bouton pour ajouter un threshold
+      const addBtn = document.createElement("button");
+      addBtn.textContent = "Add Threshold";
+      addBtn.style.marginTop = "8px";
+      addBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const new_thresholds = [...this._config.color_thresholds];
+        new_thresholds.push({ value: 0, color: "#ffffff" });
+        this._onFieldChange(key, new_thresholds);
+        //this._refreshThresholdEditor();
+      });
+
+      wrapper.appendChild(addBtn);
+    } else {
+      // Tous les autres types avec label au-dessus
+      const lbl = document.createElement("label");
+      lbl.textContent = label;
+      wrapper.appendChild(lbl);
+
+      if (type === "entity") {
+        input = document.createElement("ha-entity-picker");
+        input.setAttribute("allow-custom-entity", "");
+        input.hass = this._hass;
+
+        input.addEventListener("value-changed", (e) => {
+          e.stopPropagation();
+          this._onFieldChange(key, e.detail.value);
+        });
+      } else if (type === "number" || type === "text") {
+        input = document.createElement("ha-textfield");
+        input.type = type;
+        if (min !== undefined) input.min = min;
+        if (max !== undefined) input.max = max;
+        if (required) input.required = true;
+
+        input.addEventListener("change", (e) => {
+          e.stopPropagation();
+          const value = type === "number" ? Number(input.value) : input.value;
+          this._onFieldChange(key, value);
+        });
+      } else if (type === "select") {
+        input = document.createElement("ha-select");
+        for (const val in options) {
+          const opt = document.createElement("mwc-list-item");
+          opt.value = val;
+          opt.innerText = options[val];
+          input.appendChild(opt);
+        }
+
+        input.addEventListener("selected", (e) => {
+          e.stopPropagation();
+          this._onFieldChange(key, e.target.value);
+        });
+        input.addEventListener("closed", (e) => {
+          e.stopPropagation();
+        });
+      }
+
+      wrapper.appendChild(input);
+    }
+    this.fields[key] = {};
+    this.fields[key].input = input;
+    this.fields[key].type = type;
+    this.content.appendChild(wrapper);
+  }
+
+  // --- Gestion des changements de champ ---
+  _onFieldChange(key, value) {
+    const newConfig = { ...this._config, [key]: value };
+    this._config = newConfig;
+    this.dispatchEvent(
+      new CustomEvent("config-changed", {
+        detail: { config: newConfig },
+        bubbles: true,
+        composed: true,
+      })
+    );
+  }
+}
+
 // Register custom element
+customElements.define("ha-temperature-heatmap-card-editor", TemperatureHeatmapCardEditor);
 customElements.define('ha-temperature-heatmap-card', TemperatureHeatmapCard);

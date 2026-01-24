@@ -178,8 +178,10 @@ class TemperatureHeatmapCard extends HTMLElement {
       // Units
       unit: config.unit || null,
 
-      // Color thresholds - auto-detect based on unit if not provided
-      color_thresholds: config.color_thresholds || this._getDefaultThresholds(),
+      // Color thresholds - auto-detect based on unit if not provided or empty
+      color_thresholds: (config.color_thresholds && config.color_thresholds.length > 0)
+        ? config.color_thresholds
+        : this._getDefaultThresholds(),
 
       // Refresh
       refresh_interval: config.refresh_interval || 300,  // Seconds (5 min default)
@@ -1633,7 +1635,7 @@ class TemperatureHeatmapCardEditor extends HTMLElement {
       rounded_corners: true,
       interpolate_colors: false,
       color_interpolation: 'hsl',
-      color_thresholds: DEFAULT_THRESHOLDS_CELSIUS.slice(),
+      color_thresholds: [],  // Empty array - editor will populate, card auto-detects if empty
     };
     this._config = { ...defaults, ...this._config };
 

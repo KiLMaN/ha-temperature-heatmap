@@ -87,6 +87,18 @@ export class TemperatureHeatmapCard extends HTMLElement {
       throw new Error(`color_interpolation must be one of: ${validInterpolations.join(', ')}`);
     }
 
+    // Validate data_source
+    const validDataSources = ['auto', 'history', 'statistics'];
+    if (config.data_source && !validDataSources.includes(config.data_source)) {
+      throw new Error(`data_source must be one of: ${validDataSources.join(', ')}`);
+    }
+
+    // Validate statistic_type
+    const validStatisticTypes = ['mean', 'min', 'max'];
+    if (config.statistic_type && !validStatisticTypes.includes(config.statistic_type)) {
+      throw new Error(`statistic_type must be one of: ${validStatisticTypes.join(', ')}`);
+    }
+
     // Validate decimals
     if (config.decimals !== undefined && (config.decimals < 0 || config.decimals > 2)) {
       throw new Error('decimals must be between 0 and 2');
@@ -189,6 +201,10 @@ export class TemperatureHeatmapCard extends HTMLElement {
       rounded_corners: config.rounded_corners !== false,  // Default true
       interpolate_colors: config.interpolate_colors || false,
       color_interpolation: config.color_interpolation || 'hsl',  // 'gamma', 'hsl', 'lab', 'rgb'
+
+      // Data source options
+      data_source: config.data_source || 'auto',  // 'auto', 'history', 'statistics'
+      statistic_type: config.statistic_type || 'mean',  // 'mean', 'min', 'max' (for statistics data)
     };
 
     // Sort thresholds by value (ascending) - create mutable copy to avoid "read-only" errors
@@ -336,6 +352,24 @@ export class TemperatureHeatmapCard extends HTMLElement {
     return data;
   }
 
+  // Determine which data source to use based on config and availability
+  _getDataSource() {
+    const source = this._config.data_source;
+
+    if (source === 'history') return 'history';
+    if (source === 'statistics') return 'statistics';
+
+    // Auto mode: prefer statistics for historical data (viewOffset < 0)
+    // or when explicitly looking at older data
+    // Statistics are hourly aggregates - good for longer time ranges
+    if (this._viewOffset < 0) {
+      return 'statistics';
+    }
+
+    // For current view, use history for more granular data
+    return 'history';
+  }
+
   // Fetch historical data from Home Assistant
   async _fetchHistoryData() {
     if (this._isLoading) {
@@ -347,7 +381,8 @@ export class TemperatureHeatmapCard extends HTMLElement {
     this._error = null;
     this._render();  // Show loading state
 
-    console.log('Temperature Heatmap: Starting data fetch...');
+    const dataSource = this._getDataSource();
+    console.log(`Temperature Heatmap: Starting data fetch using ${dataSource}...`);
 
     try {
       // Calculate date range in LOCAL timezone, excluding current incomplete interval
@@ -375,32 +410,12 @@ export class TemperatureHeatmapCard extends HTMLElement {
       startTime.setHours(0, 0, 0, 0);  // Start of first day at midnight
 
       console.log(`Temperature Heatmap: Fetching from ${startTime.toLocaleString()} to ${endTime.toLocaleString()}`);
-      console.log(`Temperature Heatmap: Current time: ${now.toLocaleString()}, Last complete interval: ${endTime.toLocaleString()}`);
 
-      // Convert local times to ISO strings (the API returns data in UTC, so we send UTC times)
-      const startTimeISO = startTime.toISOString();
-      const endTimeISO = endTime.toISOString();
-
-      console.log(`Temperature Heatmap: API times - Start: ${startTimeISO}, End: ${endTimeISO}`);
-
-      // Build API URL
-      const temperatureUrl = `history/period/${startTimeISO}?` +
-        `filter_entity_id=${this._config.entity}&` +
-        `end_time=${endTimeISO}&` +
-        `minimal_response&no_attributes`;
-
-      // Fetch with timeout
-      const startFetch = Date.now();
-      const result = await this.fetchWithCache(temperatureUrl);
-      const fetchDuration = ((Date.now() - startFetch) / 1000).toFixed(1);
-
-      console.log(`Temperature Heatmap: Received ${result?.[0]?.length || 0} temperature points in ${fetchDuration}s`);
-
-      this._historyData = {
-        temperature: result?.[0] || [],
-        startTime,
-        endTime
-      };
+      if (dataSource === 'statistics') {
+        await this._fetchStatisticsData(startTime, endTime);
+      } else {
+        await this._fetchHistoryApiData(startTime, endTime);
+      }
 
       this._lastFetch = Date.now();
 
@@ -426,6 +441,90 @@ export class TemperatureHeatmapCard extends HTMLElement {
       };
       this._render();
     }
+  }
+
+  // Fetch data using the history/period REST API (short-term states)
+  async _fetchHistoryApiData(startTime, endTime) {
+    const startTimeISO = startTime.toISOString();
+    const endTimeISO = endTime.toISOString();
+
+    console.log(`Temperature Heatmap: Using history API - Start: ${startTimeISO}, End: ${endTimeISO}`);
+
+    // Build API URL
+    const temperatureUrl = `history/period/${startTimeISO}?` +
+      `filter_entity_id=${this._config.entity}&` +
+      `end_time=${endTimeISO}&` +
+      `minimal_response&no_attributes`;
+
+    // Fetch with timeout
+    const startFetch = Date.now();
+    const result = await this.fetchWithCache(temperatureUrl);
+    const fetchDuration = ((Date.now() - startFetch) / 1000).toFixed(1);
+
+    console.log(`Temperature Heatmap: Received ${result?.[0]?.length || 0} temperature points in ${fetchDuration}s`);
+
+    this._historyData = {
+      temperature: result?.[0] || [],
+      startTime,
+      endTime,
+      dataSource: 'history'
+    };
+  }
+
+  // Fetch data using the recorder/statistics_during_period WebSocket API (long-term statistics)
+  async _fetchStatisticsData(startTime, endTime) {
+    const startTimeISO = startTime.toISOString();
+    const endTimeISO = endTime.toISOString();
+
+    console.log(`Temperature Heatmap: Using statistics API - Start: ${startTimeISO}, End: ${endTimeISO}`);
+
+    // Fetch with timeout to prevent hanging
+    const fetchWithTimeout = (promise, timeoutMs = 30000) => {
+      return Promise.race([
+        promise,
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Request timeout after 30 seconds')), timeoutMs)
+        )
+      ]);
+    };
+
+    const startFetch = Date.now();
+
+    // Call the WebSocket API for statistics
+    // The API returns hourly aggregated data (mean, min, max) from the statistics table
+    const statsResult = await fetchWithTimeout(
+      this._hass.callWS({
+        type: 'recorder/statistics_during_period',
+        start_time: startTimeISO,
+        end_time: endTimeISO,
+        statistic_ids: [this._config.entity],
+        period: 'hour',  // Hourly aggregates
+      })
+    );
+
+    const fetchDuration = ((Date.now() - startFetch) / 1000).toFixed(1);
+
+    // Convert statistics format to history format for processing
+    // Statistics API returns: { "sensor.entity": [{ start, end, mean, min, max, sum, state }, ...] }
+    const temperatureStats = statsResult[this._config.entity] || [];
+
+    console.log(`Temperature Heatmap: Received ${temperatureStats.length} temperature stats in ${fetchDuration}s`);
+
+    // Convert statistics to a format compatible with our processing
+    // Each stat has: start (ISO string), mean, min, max
+    const statisticType = this._config.statistic_type;  // 'mean', 'min', or 'max'
+
+    const temperatureData = temperatureStats.map(stat => ({
+      last_changed: stat.start,
+      state: String(stat[statisticType] ?? stat.mean ?? ''),
+    })).filter(point => point.state !== '' && point.state !== 'null');
+
+    this._historyData = {
+      temperature: temperatureData,
+      startTime,
+      endTime,
+      dataSource: 'statistics'
+    };
   }
 
   // Process raw history data into grid structure

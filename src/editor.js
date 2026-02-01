@@ -53,6 +53,8 @@ export class TemperatureHeatmapCardEditor extends HTMLElement {
       interpolate_colors: false,
       color_interpolation: 'hsl',
       color_thresholds: [],  // Empty array - editor will populate, card auto-detects if empty
+      data_source: 'auto',
+      statistic_type: 'mean',
     };
     this._config = { ...defaults, ...this._config };
 
@@ -83,6 +85,8 @@ export class TemperatureHeatmapCardEditor extends HTMLElement {
       { type: 'number', key: 'start_hour', label: 'Start Hour', min: 0, max: 23 },
       { type: 'number', key: 'end_hour', label: 'End Hour', min: 0, max: 23 },
       { type: 'select', key: 'aggregation_mode', label: 'Aggregation Mode', options: { average: 'Average', min: 'Min', max: 'Max' } },
+      { type: 'select', key: 'data_source', label: 'Data Source', options: { 'auto': 'Auto (statistics for past, history for current)', 'history': 'History only (limited by purge_keep_days)', 'statistics': 'Statistics only (long-term hourly data)' } },
+      { type: 'select', key: 'statistic_type', label: 'Statistic Type', options: { 'mean': 'Average', 'max': 'Maximum', 'min': 'Minimum' } },
       { type: 'number', key: 'decimals', label: 'Decimals', min: 0, max: 2 },
       { type: 'select', key: 'unit', label: 'Unit', options: { C: 'Celsius', F: 'Fahrenheit' } },
       { type: 'number', key: 'refresh_interval', label: 'Refresh Interval (s)', min: 10, max: 3600 },

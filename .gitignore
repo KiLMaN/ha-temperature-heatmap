@@ -17,8 +17,7 @@ Thumbs.db
 node_modules/
 package-lock.json
 
-# Build artifacts (if build process added later)
-dist/
+# Build artifacts
 build/
 
 # Logs

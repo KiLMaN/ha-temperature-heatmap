@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.1] - 2026-02-09
+
+### Fixed
+- Cell hover effect no longer persists on Android/touch devices after tapping (Issue #4)
+  - Wrapped hover styles in `@media (hover: hover)` to only apply on devices with a true pointer
+  - Prevents cell from rendering on top of more-info popup due to transform stacking context
+- VERSION constant now correctly reflects the current release (was stuck at 0.4.0)
+
 ## [0.5.0] - 2026-02-05
 
 ### Added

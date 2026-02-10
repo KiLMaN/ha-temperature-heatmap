@@ -38,7 +38,7 @@ export class TemperatureHeatmapCardEditor extends HTMLElement {
       end_hour: 23,
       aggregation_mode: 'average',
       decimals: 1,
-      unit: '°C',
+      unit: '',
       refresh_interval: 300,
       click_action: 'more-info',
       show_entity_name: false,
